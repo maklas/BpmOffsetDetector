@@ -8,7 +8,7 @@ BpmOffsetDetector is a Python script designed to analyze and detect BPM (beats p
 - Simple and easy-to-use Python script
 
 ## Limits
-- It will most likely fail if bpm changes throughout the song.
+- It can't be used to track beats for song with changing BPMs
 - It assumes song's BPM is a whole number, which is fine for most of the time, but not always.  
 
 ## Usage
@@ -22,16 +22,18 @@ bpm, time_scale, offset, add = bpm_offset_detector.detect('song.ogg')
 print(bpm) # 125
 print(offset) # 0.123 
 print(add) # 0.357
-#...append 0.357 seconds of silence to make the song's first beat start at exactly 0.0 seconds
+#append 0.357 seconds of silence to make the song's first beat start at exactly 0.0 seconds
 ```
 
 
 ## Some stats
 ![Correct guess statistics](test/Stats.png)
-Out of 1719 songs tested:
+Out of 1719 songs with static BPM tested:
 - 1653 are 4/4 timescale and 66 are 3/4
 - only 1568 songs are considered to be detectable (meaning their bpm is divisible by 0.5)
-- Out of them, 1534 were detected correctly, implying 97.83% success rate for detectable and 89.23% success rate overall
+- Out of them, 1534 were detected correctly, implying 97.83% success rate for detectable scenarios and 89.23% success rate overall (keep in mind real world usage will probably be less, since variable bpm songs exist)
+- 3/4 timescale success rate will be increased later
 
 ## Author
 - Maklas
+- This algorithm is currently used in BeatSaber map generator [LazyMapper](https://www.reddit.com/r/beatsaber/comments/1hwtgxq/i_made_a_map_generator/) 
