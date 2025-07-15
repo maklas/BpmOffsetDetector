@@ -7,7 +7,7 @@ import math
 # These parameters MUST NOT be changed. The whole algorithm was fine-tuned on them.
 # I mean I don't claim these are the best for your use case. But if you change these,
 # you better have a large database of samples to test it on.
-# Also, if you change this you'll probably have to fine-tune other magic numbers across this file
+# Also, if you change this, you'll probably have to fine-tune other magic numbers across this file
 __SR__ = 44100
 __HOP__ = 512
 
@@ -220,9 +220,9 @@ def detect(audio_path=None, y=None, sr=None, bpm=None, detect_offset=True, detec
     :param bpm: You can specify BPM if it's known
     :param detect_offset: boolean. If True, the function will also return OFFSET and ADD (takes additional time to detect)
     :param detect_time_scale: boolean. If True, the function will also return TIME_SCALE (takes additional time to detect)
-    :return: BPM of the song,
-            TIME_SCALE (Either 3 or 4)
-            OFFSET (positive or negative value within +-(60/bpm) / 2) and
+    :return: BPM of the song;
+            TIME_SCALE (Either 3 or 4);
+            OFFSET (positive or negative value within +-(60/bpm) / 2);
             ADD (always positive number of how many seconds of silence to add to audio file to make song offset be = 0)
 
     Examples

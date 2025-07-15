@@ -1,0 +1,6 @@
+# Environments
+.env
+.venv
+env/
+venv/
+test/test_stats.py
