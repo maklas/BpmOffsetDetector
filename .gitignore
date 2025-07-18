@@ -3,4 +3,4 @@
 .venv
 env/
 venv/
-test/test_stats.py
+test/test_*

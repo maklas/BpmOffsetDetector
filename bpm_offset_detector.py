@@ -1,6 +1,5 @@
 import librosa
 import numpy as np
-import math
 
 # Author: Maklas
 
@@ -14,8 +13,8 @@ __HOP__ = 512
 # Can be set to either 1 or 0.5. Increasing it more is just dumb.
 # Decreasing increases error rate and time it takes to detect
 __BPM_PRECISION__ = 0.5
-# Max BPM. Everything beyond will be forcefully halved
-__BPM_LIMIT__ = 200
+# Minimal BPM. Everything below that value will be forcefully doubled
+__MIN_BPM__ = 90
 # Warning! Linearly increases BPM detection time.
 # Reduce -> accuracy and time it takes to detect falls
 # Increase -> Accuracy doesn't really grow all that much, but time to detect will grow
@@ -27,82 +26,22 @@ def _get_onsets_from_strength(onset_strength, sr):
     """
     return librosa.onset.onset_detect(sr=sr, onset_envelope=onset_strength, hop_length=__HOP__, units='frames')
 
-def _get_gaps(onsets):
-    """
-    Gaps between onsets in frames. But we wrap it from 8 to 14 frames.
-    Which means we're initially looking in range from 90 to 172 BPM.
-    """
-    gaps = []
-    min_gap = 7
-    max_gap = min_gap * 2
-    for i in range(1, len(onsets)):
-        distance = onsets[i] - onsets[i - 1]
-        while distance > 0 and distance < min_gap:
-            distance *= 2
-        while distance > max_gap:
-            distance = round(distance / 2)
-        if distance <= min_gap:
-            distance *= 2
-        gaps.append(distance)
-    return gaps
 
-def _get_ballpark_bpms(gaps):
-    """
-    Using extracted gaps we're trying to narrow down the BPM range that we're going to brute force
-    """
-    window = 5
-    assert (window - 1) % 2 == 0
-    wings = int((window - 1) / 2)
-    max = np.max(gaps)
-    bins = [0 for _ in range(max + 1)]
+def _get_scores(timings, bpm):
+    score, offset = _get_match_score(timings, bpm)
+    return [score, _get_avg_change_score(timings, bpm, offset)]
 
-    for g in gaps:
-        bins[g] += 1
-    for i in range(max - window + 2, max, 2):
-        bins[int(i / 2)] = bins[i] + bins[i + 1]
-
-    center_index = 0
-    center_max = 0
-    for i in range(wings, len(bins) - wings):
-        sum = 0
-        for j in range(i - wings, i + wings + 1):
-            sum += bins[j] / (abs(i - j) + 1)
-        if sum > center_max:
-            center_index = i
-            center_max = sum
-
-    min_frames = center_index - wings
-    max_frames = center_index + wings
-
-    min_bpm = 60 / (((max_frames * __HOP__) / __SR__) * 4)
-    max_bpm = 60 / (((min_frames * __HOP__) / __SR__) * 4)
-
-
-    bpms = []
-    if max_bpm > __BPM_LIMIT__:
-        bpms += [float(_) for _ in np.arange(math.floor(min_bpm), __BPM_LIMIT__, __BPM_PRECISION__)]
-        bpms += [float(_) for _ in np.arange(math.floor(__BPM_LIMIT__ / 2), math.ceil(max_bpm / 2), __BPM_PRECISION__)]
-        bpms = sorted(list(set(bpms)))
-    else:
-        bpms = [float(_) for _ in np.arange(math.floor(min_bpm), math.ceil(max_bpm), __BPM_PRECISION__)]
-    return bpms
-
-
-def _get_scores(onsets, bpm):
-    return [_get_match_score(onsets, bpm), _get_avg_change_score(onsets, bpm)]
-
-def _get_match_score(onsets, bpm):
+def _get_match_score(timings, bpm):
     """
     Score of how well this bpm matching the onsets.
     A number of fitting onsets for this BPM
     """
-    times = librosa.frames_to_time(onsets, sr=__SR__, hop_length=__HOP__)
     step = 60 / bpm
     error_window = step / __MATCH_SCORE_CHECKS__
     results = []
     for i in np.arange(0, step, step / __MATCH_SCORE_CHECKS__):
         r = 0
-        for t in times:
+        for t in timings:
             d = (t - i) % step
             if d > step / 2:
                 d -= step
@@ -110,18 +49,18 @@ def _get_match_score(onsets, bpm):
                 r += 1
         results.append(r)
 
-    return max(results)
+    max_matches = max(results)
+    return max_matches, (step / __MATCH_SCORE_CHECKS__) * results.index(max_matches)
 
-def _get_avg_change_score(onsets, bpm):
+def _get_avg_change_score(timings, bpm, offset):
     """
     Score of how well this bpm matching the onsets.
     The average change of distances to the offsets.
     """
-    times = librosa.frames_to_time(onsets, sr=__SR__, hop_length=__HOP__)
     step = 60 / bpm
     distances = []
-    for t in times:
-        d = t % step
+    for t in timings:
+        d = (t - offset) % step
         if d > step / 2:
             d -= step
         distances.append(abs(d))
@@ -133,7 +72,7 @@ def _get_avg_change_score(onsets, bpm):
 
 def _select_best_index(scores):
     """
-    We're looking for a value that has the most change in both scores across neighbouring BPMs
+    We're looking for a value that has the most change in both scores across neighboring BPMs
     """
     scores = np.array(scores)
     match_scores = scores[:, 0]
@@ -168,18 +107,13 @@ def _select_best_index(scores):
 
     return int(max(best, key=best.get))
 
-def _find_time_scale():
-    # TODO: I'm sorry, I'm too lazy for now
-    return 4
-
-def _find_offset(onset_strength, bpm, sr, x=1.25):
+def _find_offset(timings, bpm, sr, x=1.25):
     """
     This algorithm is not that bad, but honestly I think it could be better.
     Spectrogram shows offset quite clearly, and may be that's the key.
     But here we do magic numbers for some reason
     """
     dt = (60 / bpm)
-    timings = librosa.onset.onset_detect(sr=sr, onset_envelope=onset_strength, hop_length=__HOP__, units='time')
     error_room = __HOP__/44100 # +- 1 frame. TODO: test different values
 
     timing_count = {}
@@ -196,11 +130,11 @@ def _find_offset(onset_strength, bpm, sr, x=1.25):
         timing_count[t] = count
         timing_map[t] = matched_timings
 
-    best = max(timing_count, key=timing_count.get) # best is the one with the most onsets
+    best = max(timing_count, key=timing_count.get) # the best is the one with the most onsets
     best += np.average(timing_map[best]) # even more precise position by averaging all matched onsets
     best = best % dt # Skip a beat if required
-    best = best - ((__HOP__/sr) * x) # subtract 1.25 pixels (hops) because onset detection is usually lagging behind a bit. Value of 1.25 was figured out by testing many songs
-    offset = best - dt if best > dt/2 else best # look for closest value. Closest might be on the negative side
+    best = best - ((__HOP__/sr) * x) # Subtract 1.25 pixels (hops) because onset detection is usually lagging behind a bit. The value of 1.25 was figured out by testing many songs
+    offset = best - dt if best > dt/2 else best # Look for the closest value. Closest might be on the negative side
     add = dt - offset if offset >= 0 else abs(offset)
     return offset, add
 
@@ -212,7 +146,7 @@ def load(audio_file):
     y, sr = librosa.load(audio_file, sr=__SR__)
     return y, sr
 
-def detect(audio_path=None, y=None, sr=None, bpm=None, detect_offset=True, detect_time_scale=True):
+def detect(audio_path=None, y=None, sr=None, bpm=None, detect_offset=True):
     """
     :param audio_path: Path to an audio file
     :param y: audio time series from librosa.load(). Either supply audio file path or y + sr
@@ -245,22 +179,16 @@ def detect(audio_path=None, y=None, sr=None, bpm=None, detect_offset=True, detec
     elif sr != __SR__:
         raise AttributeError('BPM/offset detection expects only sample rate of 44100')
     onset_strength = librosa.onset.onset_strength(y=y, sr=sr, aggregate=np.average)
+    onsets = _get_onsets_from_strength(onset_strength, sr)
+    timings = librosa.frames_to_time(onsets, sr=__SR__, hop_length=__HOP__)
     if bpm is None:
-        onsets = _get_onsets_from_strength(onset_strength, sr)
-        gaps = _get_gaps(onsets)
-        bpms = _get_ballpark_bpms(gaps)
-        scores = [_get_scores(onsets, b) for b in bpms]
+        bpms = [float(_) for _ in np.arange(__MIN_BPM__, __MIN_BPM__ * 2, 0.5)]
+        scores = [_get_scores(timings, b) for b in bpms]
         best_bpm_index = _select_best_index(scores)
         bpm = bpms[best_bpm_index]
 
     if not detect_offset:
-        if detect_time_scale:
-            return bpm, _find_time_scale()
-        else:
-            return bpm
+        return bpm, 4
 
-    offset, add = _find_offset(onset_strength, bpm, sr)
-    if detect_time_scale:
-        return bpm, _find_time_scale(), offset, add
-    else:
-        return bpm, offset, add
+    offset, add = _find_offset(timings, bpm, sr)
+    return bpm, 4, offset, add
