@@ -1,6 +1,6 @@
 # BpmOffsetDetector
 
-BpmOffsetDetector is a Python script designed to analyze and detect BPM (beats per minute) and offsets for music.
+BpmOffsetDetector is a Python script designed to analyze and detect BPM (beats per minute) and offsets for music, primarily for [developing games](#Author) or for personal use.
 
 ## Features
 - Detects a BPM for a static BPM songs where BPM is a whole number or is at least divisible by 0.5
@@ -9,7 +9,7 @@ BpmOffsetDetector is a Python script designed to analyze and detect BPM (beats p
 
 ## Limits
 - It can't be used to track beats for song with changing BPMs
-- It assumes song's BPM is a whole number, which is fine for most of the time, but not always.  
+- It assumes song's BPM is a whole number, which is fine most of the time, but not always.  
 
 ## Usage
 1. Make sure ffmpeg is installed on your pc
@@ -18,21 +18,21 @@ BpmOffsetDetector is a Python script designed to analyze and detect BPM (beats p
 ```python
 import bpm_offset_detector
 
-bpm, time_scale, offset, add = bpm_offset_detector.detect('song.ogg')
+bpm, subdivision, offset, add = bpm_offset_detector.detect('path/to/my/song.ogg')
 print(bpm) # 125
+print(subdivision) # 4
 print(offset) # 0.123 
 print(add) # 0.357
-#append 0.357 seconds of silence to make the song's first beat start at exactly 0.0 seconds
+# append 0.357 seconds of silence to make the song's first beat start at exactly 0.0 seconds
+# apply some game logic every 1/4 of a beat
 ```
 
 
 ## Some stats
 ![Correct guess statistics](test/Stats.png)
-Out of 1719 songs with static BPM tested:
-- 1653 are 4/4 timescale and 66 are 3/4
-- only 1568 songs are considered to be detectable (meaning their bpm is divisible by 0.5)
-- Out of them, 1534 were detected correctly, implying 97.83% success rate for detectable scenarios and 89.23% success rate overall (keep in mind real world usage will probably be less, since variable bpm songs exist)
-- 3/4 timescale success rate will be increased later
+Out of 1741 songs with static BPM tested:
+- only 1615 songs are considered to be detectable (meaning their bpm is divisible by 0.5)
+- Out of them, 1609 were detected correctly, implying 99.63% success rate for detectable scenarios and 92.42% success rate overall (keep in mind real world usage will probably be less, since variable bpm songs exist)
 
 ## Author
 - Maklas
