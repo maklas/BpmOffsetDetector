@@ -141,7 +141,7 @@ def _get_match_score(timings, bpm):
         results.append(r)
 
     max_matches = max(results)
-    return max_matches * step, substep * results.index(max_matches)
+    return max_matches, substep * results.index(max_matches)
 
 
 def _calculate_bpm_scores_and_offset(bpms, timings):
@@ -151,10 +151,23 @@ def _calculate_bpm_scores_and_offset(bpms, timings):
     results = []
     for bpm in bpms:
         score, offset = _get_match_score(timings, bpm)
+        score_scaled = score * (60 / bpm)
         change_score = _get_avg_change_score(timings, bpm, offset)
-        results.append([bpm, offset, score, change_score, 0])
+        results.append([bpm, offset, score, score_scaled, change_score, 0])
 
     best_std_indexes = list(range(len(bpms)))
+    for i in best_std_indexes:
+        main_val = results[i][4]
+        surrounding_values = []
+        #we get 2 from the left and 2 from the right of the value
+        for j in range(max(0, i - 2), i):
+            surrounding_values.append(results[j][4])
+        for j in range(i + 1, min(len(results), i + 3)):
+            surrounding_values.append(results[j][4])
+
+        change = main_val / np.average(surrounding_values)
+        results[i][5] = change if change > 1 else 1 / change
+
     for i in best_std_indexes:
         main_val = results[i][3]
         surrounding_values = []
@@ -165,35 +178,39 @@ def _calculate_bpm_scores_and_offset(bpms, timings):
             surrounding_values.append(results[j][3])
 
         change = main_val / np.average(surrounding_values)
-        results[i][4] = change if change > 1 else 1 / change
-
-    for i in best_std_indexes:
-        main_val = results[i][2]
-        surrounding_values = []
-        #we get 2 from the left and 2 from the right of the value
-        for j in range(max(0, i - 2), i):
-            surrounding_values.append(results[j][2])
-        for j in range(i + 1, min(len(results), i + 3)):
-            surrounding_values.append(results[j][2])
-
-        change = main_val / np.average(surrounding_values)
-        results[i][4] *= change if change > 1 else 1 / change
+        results[i][5] *= change if change > 1 else 1 / change
     return results
 
 
-def _find_bpm_and_sd(bpms, onsets, timings, onset_strength):
+def _find_bpm_and_sd(bpms, onsets, timings, onset_strength, precise):
     scores = np.array(_calculate_bpm_scores_and_offset(bpms, timings))
-    threshold = (max(scores[:,4]) + np.average(scores[:,4])) / 2
-    filtered_scores = scores[scores[:, 4] > threshold]
+    threshold = (max(scores[:,5]) + np.average(scores[:,5])) / 2
+    filtered_scores = scores[scores[:, 5] > threshold]
     # Sorted, reverse order, up to 3. These are our best BPM candidates
-    sorted_scores = filtered_scores[np.argsort((filtered_scores[:, 4]))][::-1][:3]
+    sorted_scores = filtered_scores[np.argsort((filtered_scores[:, 5]))][::-1][:3]
 
     for row in sorted_scores:
         sd, needs_halving = _calculate_subdivisions(row[0], timings, onsets, onset_strength, row[1])
         if sd > 0:
-            return row[0], sd, row[1]
+            if precise:
+                b = precise_bpm_search(timings, row[2], row[0], 1, 0.01, 0.03)
+            else:
+                b = row[0]
+            return b, sd, row[1]
     return sorted_scores[0, 0], 4, filtered_scores[0, 1]
 
+def precise_bpm_search(timings, target_score, target, window, precision, snap_precision):
+    bpms = [float(_) for _ in np.arange(target - window, target + window, precision)]
+    scores = [_get_match_score(timings, bpm)[0] for bpm in bpms]
+    max_score = max(scores)
+    if target_score >= max_score * 0.99:
+        return target
+    max_indices = [i for i, x in enumerate(scores) if x == max_score]
+    precise_bpm = bpms[max_indices[len(max_indices) // 2]]
+
+    if abs(precise_bpm - target) < snap_precision:
+        return target
+    return precise_bpm
 
 
 def load(audio_file):
@@ -203,7 +220,7 @@ def load(audio_file):
     y, sr = librosa.load(audio_file, sr=__SR__)
     return y, sr
 
-def detect(audio_path=None, y=None, sr=None, bpm=None, sd=None, detect_offset=True):
+def detect(audio_path=None, y=None, sr=None, bpm=None, sd=None, detect_offset=True, precise=False):
     """
     :param audio_path: Path to an audio file
     :param y: audio time series from librosa.load(). Either supply audio file path or y + sr
@@ -211,6 +228,7 @@ def detect(audio_path=None, y=None, sr=None, bpm=None, sd=None, detect_offset=Tr
     :param bpm: You can specify BPM if it's known
     :param sd: You can specify subdivisions if it's known. Usually it's 4 or 3, meaning how many distinct sounds per beat there are
     :param detect_offset: boolean. If True, the function will also return OFFSET and ADD (takes additional time to detect)
+    :param precise: Enables 0.01 precision for BPM detection, otherwise 0.5. Enabling slows down process obviously
     :return: BPM of the song;
             SD (subdivisions. Either 4 or 3, unless specified a different number);
             OFFSET (positive or negative value within +-(60/bpm) / 2);
@@ -218,7 +236,7 @@ def detect(audio_path=None, y=None, sr=None, bpm=None, sd=None, detect_offset=Tr
 
     Examples
     --------
-    >>> bpm, sd, offset, add = bpm_offset_detector.detect('my_song.ogg')
+    >>> bpm, sd, offset, add = bpm_offset_detector.detect('my_song.ogg', precise=True)
     >>> bpm
     125
     >>> offset
@@ -241,7 +259,7 @@ def detect(audio_path=None, y=None, sr=None, bpm=None, sd=None, detect_offset=Tr
 
     if bpm is None:
         bpms = [float(_) for _ in np.arange(__MIN_BPM__, __MIN_BPM__ * 2, 0.5)]
-        bpm, sd, offset = _find_bpm_and_sd(bpms, onsets, timings, onset_strength)
+        bpm, sd, offset = _find_bpm_and_sd(bpms, onsets, timings, onset_strength, precise)
     else:
         offset = None
 
